@@ -126,6 +126,19 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                 return 0;
             }
 
+            // --delay-per-item 越界与 -w 同待遇：整批无效的输入错误 → 明确报错 + 退出码 1，
+            // 且必须在 InitializeRequestSessionAsync（首次网络请求）之前判掉。
+            // 不抛 ArgumentException：ExecuteAsync 只捕获 OperationCanceledException，抛出去会
+            // 落到 Spectre 命令级处理器，被报成误导性的"请尝试升级到最新版本后重试!"。
+            // 校验点排在 -w 解析**之前**（与默认下载命令一致：Workflow 先 ValidateNumericOptions
+            // 再 ChangeWorkingDir）：TryResolveWorkDir 会经 ResolveWorkDir 执行
+            // Directory.CreateDirectory，排在其后会让一次注定失败的越界调用仍建出 -w 目录。
+            if (!TryValidateDelayPerItem(settings.DelayPerItem, out string? delayError))
+            {
+                Logger.LogError(delayError);
+                return 1;
+            }
+
             // -w 必须先绝对化且只解析一次（RF-89）：ChangeWorkingDir（CLI 非 serve）会把进程
             // CWD 切到上一个订阅的下载目录，相对 -w 到第二个订阅会基于该目录再拼一层，
             // 产出 <root>/<sub1>/<sub2> 嵌套。
@@ -139,16 +152,6 @@ public class SubCheckCommand : AsyncCommand<SubCheckSettings>
                 return 1;
             }
             settings.WorkDir = resolvedWorkDir;
-
-            // --delay-per-item 越界与 -w 同待遇：整批无效的输入错误 → 明确报错 + 退出码 1，
-            // 且必须在 InitializeRequestSessionAsync（首次网络请求）之前判掉。
-            // 不抛 ArgumentException：ExecuteAsync 只捕获 OperationCanceledException，抛出去会
-            // 落到 Spectre 命令级处理器，被报成误导性的"请尝试升级到最新版本后重试!"。
-            if (!TryValidateDelayPerItem(settings.DelayPerItem, out string? delayError))
-            {
-                Logger.LogError(delayError);
-                return 1;
-            }
 
             // 订阅解析与拉取（VIP/登录态内容）需要凭据：
             // LoadCredentials 会优先应用命令行 --cookie/--access-token，否则加载本地 BBDown.data。
